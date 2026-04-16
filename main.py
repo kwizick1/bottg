@@ -158,7 +158,7 @@ def get_main_reply_keyboard():
     return ReplyKeyboardMarkup(
         keyboard, 
         resize_keyboard=True,  # Делает кнопку аккуратной и маленькой
-        persistent=True        # Кнопка не исчезнет сама по себе
+        is_persistent=True        # Кнопка не исчезнет сама по себе
     )
 # Вызываем загрузку данных при запуске скрипта
 load_user_ids()
