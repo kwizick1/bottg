@@ -259,21 +259,23 @@ def build_topics_keyboard(class_id: str, prefix: str) -> InlineKeyboardMarkup:
 # ------------------------- HANDLERS -------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global users  # ДОБАВЛЕНО: чтобы функция видела базу данных пользователей
+    
     user_id = update.effective_user.id
-    # Регистрация пользователя (твой существующий код)
+    
+    # Регистрация пользователя (твой код)
     if str(user_id) not in users:
         users[str(user_id)] = {'joined': time.ctime(), 'solved': 0}
         save_db()
 
-    # Отправка сообщения с НОВОЙ клавиатурой
+    # Отправляем текстовую кнопку "🏠 Главное меню"
     await update.message.reply_text(
-        "Добро пожаловать в справочник по физике!",
-        reply_markup=get_main_reply_keyboard() # Подключаем кнопку внизу
+        "Добро пожаловать в справочник по физике! Используйте меню ниже для навигации.",
+        reply_markup=get_main_reply_keyboard()
     )
     
-    # Показ основного инлайн-меню (кнопки под сообщением)
-    return await show_main_menu(update, context)
-
+    # Вызываем функцию, которая рисует кнопки классов (в твоем коде она называется main_menu)
+    return await main_menu(update, context)
     # --- Сбор полной информации ---
     if chat_id not in ALL_USERS_IDS:
         user_data = {
@@ -676,9 +678,11 @@ async def finish_test(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: i
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global users # ДОБАВЛЕНО
+    
     text = update.message.text
 
-    # Проверка нажатия кнопки на основной клавиатуре
+    # Если нажата кнопка на клавиатуре
     if text == "🏠 Главное меню":
         return await start(update, context)
 
