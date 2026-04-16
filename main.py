@@ -20,7 +20,7 @@ from google.api_core import exceptions
 import time
 from typing import Dict, Any, List
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -152,7 +152,14 @@ def save_stats():
     except Exception as e:
         logger.error(f"Ошибка сохранения статистики: {e}")
 
-
+def get_main_reply_keyboard():
+    # Создаем кнопку, которая будет висеть вместо клавиатуры
+    keyboard = [['🏠 Главное меню']]
+    return ReplyKeyboardMarkup(
+        keyboard, 
+        resize_keyboard=True,  # Делает кнопку аккуратной и маленькой
+        persistent=True        # Кнопка не исчезнет сама по себе
+    )
 # Вызываем загрузку данных при запуске скрипта
 load_user_ids()
 load_stats()
@@ -253,8 +260,13 @@ def build_topics_keyboard(class_id: str, prefix: str) -> InlineKeyboardMarkup:
 # ------------------------- HANDLERS -------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat_id = update.effective_chat.id
+    # Добавляем reply_markup в ответ
+    await update.message.reply_text(
+        "Привет! Я бот-репетитор по физике. Нажми на кнопку ниже, чтобы открыть меню.",
+        reply_markup=get_main_reply_keyboard()
+    )
+    # Вызываем обычное инлайн-меню (твой старый код)
+    return await send_main_menu(update, context)
 
     # --- Сбор полной информации ---
     if chat_id not in ALL_USERS_IDS:
@@ -658,8 +670,12 @@ async def finish_test(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: i
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat_id = update.effective_chat.id
+    text = update.message.text
+
+    # Если пользователь нажал на кнопку "Главное меню" на клавиатуре
+    if text == "🏠 Главное меню":
+        # Сбрасываем состояние (если нужно) и отправляем инлайн-меню
+        return await send_main_menu(update, context)
 
     # --- Сбор полной информации ---
     if chat_id not in ALL_USERS_IDS:
