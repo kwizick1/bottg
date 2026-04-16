@@ -289,7 +289,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ai_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Основная логика для обработки запроса нейросети с логикой повторных попыток (Retry).
+    Основная логика для обработки запроса нейросети с логикой повторных попыток.
     """
     user_prompt = update.effective_message.text
     chat_id = update.effective_chat.id
@@ -298,7 +298,7 @@ async def ai_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not ai_client:
-        await update.effective_message.reply_text("⛔️ Функция ИИ временно недоступна. Убедитесь, что API-ключ настроен.", parse_mode='HTML')
+        await update.effective_message.reply_text("⛔️ Функция ИИ временно недоступна.", parse_mode='HTML')
         return
     
     await context.bot.send_chat_action(chat_id, telegram.constants.ChatAction.TYPING)
@@ -306,62 +306,43 @@ async def ai_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     system_prompt = (
         "Ты — эксперт-репетитор по школьной физике (7-11 класс). Отвечай на вопросы "
         "максимально точно и дружелюбно. Используй Markdown для форматирования "
-        "и LaTeX-синтаксис в одинарных знаках доллара ($) для формул (например, $E=mc^2$). "
-        "Всегда начинай ответ с краткого и прямого пояснения."
+        "и LaTeX-синтаксис в одинарных знаках доллара ($) для формул."
     )
     full_prompt = f"ИНСТРУКЦИЯ:\n{system_prompt}\n\nВОПРОС:\n{user_prompt}"
 
-    # --- ЛОГИКА ПОВТОРНЫХ ПОПЫТОК (RETRY LOGIC) ---
     MAX_RETRIES = 3
     last_exception = None
 
     for attempt in range(MAX_RETRIES):
         try:
-            # 2. Вызываем API
+            # Используем более стабильную модель gemini-1.5-flash
             response = ai_client.models.generate_content(
                 model='gemini-1.5-flash',
-                contents=[
-                    {"role": "user", "parts": [{"text": full_prompt}]} 
-                ]
+                contents=[{"role": "user", "parts": [{"text": full_prompt}]}]
             )
             
-            # Если запрос успешен, выходим из цикла
             await update.effective_message.reply_text(
                 response.text, 
                 parse_mode='Markdown'
             )
-            return # Успешное выполнение, выходим из функции
+            return 
 
         except exceptions.ResourceExhausted as e:
-            # Обрабатываем 503 UNAVAILABLE (или 429 Rate Limit)
             last_exception = e
-            logger.warning(f"Попытка {attempt + 1}: Модель перегружена (503/429). Ожидание 3 секунды...")
-            
-           if attempt < MAX_RETRIES - 1:
-               time.sleep(10)
-            else:
-                # Если это была последняя попытка, логика отправит ошибку ниже
-                pass
+            logger.warning(f"Попытка {attempt + 1}: Перегрузка. Ожидание 10 секунд...")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(10) # Здесь была ошибка в отступах
 
         except Exception as e:
-            # Обработка всех других ошибок (токен, неизвестные ошибки)
-            logger.error(f"Критическая ошибка Gemini API на попытке {attempt + 1}: {e}")
+            logger.error(f"Ошибка Gemini на попытке {attempt + 1}: {e}")
             last_exception = e
-            break # Выход из цикла для не-503 ошибок
+            break 
 
-    # --- Если все попытки провалились ---
     if last_exception:
-        error_details = str(last_exception)
-        
         if chat_id == OWNER_ID:
-            await update.effective_message.reply_text(
-                f"❌ Ошибка API Gemini после {MAX_RETRIES} попыток (для администратора):\n<code>{error_details}</code>", 
-                parse_mode='HTML'
-            )
+            await update.effective_message.reply_text(f"❌ Ошибка API (Админ-панель): {last_exception}")
         else:
-            await update.effective_message.reply_text(
-                "❌ Извините, нейросеть сейчас перегружена. Пожалуйста, попробуйте задать вопрос через пару минут."
-            )
+            await update.effective_message.reply_text("❌ Извините, нейросеть сейчас перегружена. Попробуйте позже.")
 
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
