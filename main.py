@@ -87,7 +87,7 @@ if GEMINI_API_KEY and genai:
 # ========================= BROADCAST & USER DB CONFIG =========================
 
 # !!! ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ ЭТОТ ID НА ВАШ ЛИЧНЫЙ TELEGRAM ID !!!
-OWNER_ID = 6119625713  # <--- ВАШ ID
+OWNER_ID = 8707709434  # <--- ВАШ ID
 
 # Глобальная переменная для хранения информации о пользователях
 ALL_USERS_IDS: Dict[int, Dict[str, Any]] = {}
