@@ -319,7 +319,7 @@ async def ai_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             # 2. Вызываем API
             response = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=[
                     {"role": "user", "parts": [{"text": full_prompt}]} 
                 ]
@@ -337,9 +337,8 @@ async def ai_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_exception = e
             logger.warning(f"Попытка {attempt + 1}: Модель перегружена (503/429). Ожидание 3 секунды...")
             
-            if attempt < MAX_RETRIES - 1:
-                # Ждем перед следующей попыткой, если это не последняя
-                time.sleep(3) 
+           if attempt < MAX_RETRIES - 1:
+               time.sleep(10)
             else:
                 # Если это была последняя попытка, логика отправит ошибку ниже
                 pass
