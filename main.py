@@ -259,14 +259,20 @@ def build_topics_keyboard(class_id: str, prefix: str) -> InlineKeyboardMarkup:
 # ------------------------- HANDLERS -------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global users  # ДОБАВЛЕНО: чтобы функция видела базу данных пользователей
+    user = update.effective_user
+    chat_id = update.effective_chat.id
     
-    user_id = update.effective_user.id
-    
-    # Регистрация пользователя (твой код)
-    if str(user_id) not in users:
-        users[str(user_id)] = {'joined': time.ctime(), 'solved': 0}
-        save_db()
+    # Регистрация пользователя
+    if chat_id not in ALL_USERS_IDS:
+        user_data = {
+            'id': user.id,
+            'first_name': user.first_name,
+            'last_name': user.last_name if user.last_name else '',
+            'username': user.username if user.username else '',
+            'joined': time.ctime()
+        }
+        ALL_USERS_IDS[chat_id] = user_data
+        save_user_ids()
 
     # Отправляем текстовую кнопку "🏠 Главное меню"
     await update.message.reply_text(
@@ -274,25 +280,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_reply_keyboard()
     )
     
-    # Вызываем функцию, которая рисует кнопки классов (в твоем коде она называется main_menu)
-    return await main_menu(update, context)
-    # --- Сбор полной информации ---
-    if chat_id not in ALL_USERS_IDS:
-        user_data = {
-            'id': user.id,
-            'first_name': user.first_name,
-            'last_name': user.last_name if user.last_name else '',
-            'username': user.username if user.username else '',
-        }
-        ALL_USERS_IDS[chat_id] = user_data
-        save_user_ids()
-
-    text = f'Привет, {user.first_name or "друг"}! Я — справочник по физике. Выберите действие ниже.'
-    if update.message:
-        await update.message.reply_text(text, reply_markup=build_main_menu())
-    elif update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text, reply_markup=build_main_menu())
+    # Отображаем встроенные (inline) кнопки меню
+    await update.message.reply_text(
+        f'Привет, {user.first_name or "друг"}! Я — справочник по физике. Выберите действие ниже.',
+        reply_markup=build_main_menu()
+    )
 
 
 async def ai_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,15 +670,15 @@ async def finish_test(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: i
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global users # ДОБАВЛЕНО
-    
     text = update.message.text
+    user = update.effective_user
+    chat_id = update.effective_chat.id
 
     # Если нажата кнопка на клавиатуре
     if text == "🏠 Главное меню":
         return await start(update, context)
 
-    # --- Сбор полной информации ---
+    # Регистрация (на случай, если пользователь сразу написал текст)
     if chat_id not in ALL_USERS_IDS:
         user_data = {
             'id': user.id,
@@ -701,14 +693,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 1. Проверка режима AI Chat
     if uid in user_sessions and user_sessions[uid].get('mode') == 'ai_chat':
-        # Если в режиме AI, передаем сообщение для обработки нейросети
         await ai_query_handler(update, context)
         return
 
     # 2. Если не в режиме AI, показываем главное меню
-    text = ("Отправьте /start для запуска бота или выберите одну из кнопок в меню.")
-    await update.message.reply_text(text, reply_markup=build_main_menu())
-
+    msg_text = "Отправьте /start для запуска бота или выберите одну из кнопок в меню."
+    await update.message.reply_text(msg_text, reply_markup=build_main_menu())
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
