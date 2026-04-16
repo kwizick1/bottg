@@ -153,12 +153,11 @@ def save_stats():
         logger.error(f"Ошибка сохранения статистики: {e}")
 
 def get_main_reply_keyboard():
-    # Создаем кнопку, которая будет висеть вместо клавиатуры
     keyboard = [['🏠 Главное меню']]
     return ReplyKeyboardMarkup(
         keyboard, 
-        resize_keyboard=True,  # Делает кнопку аккуратной и маленькой
-        is_persistent=True        # Кнопка не исчезнет сама по себе
+        resize_keyboard=True, 
+        is_persistent=True  
     )
 # Вызываем загрузку данных при запуске скрипта
 load_user_ids()
@@ -260,13 +259,20 @@ def build_topics_keyboard(class_id: str, prefix: str) -> InlineKeyboardMarkup:
 # ------------------------- HANDLERS -------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Добавляем reply_markup в ответ
+    user_id = update.effective_user.id
+    # Регистрация пользователя (твой существующий код)
+    if str(user_id) not in users:
+        users[str(user_id)] = {'joined': time.ctime(), 'solved': 0}
+        save_db()
+
+    # Отправка сообщения с НОВОЙ клавиатурой
     await update.message.reply_text(
-        "Привет! Я бот-репетитор по физике. Нажми на кнопку ниже, чтобы открыть меню.",
-        reply_markup=get_main_reply_keyboard()
+        "Добро пожаловать в справочник по физике!",
+        reply_markup=get_main_reply_keyboard() # Подключаем кнопку внизу
     )
-    # Вызываем обычное инлайн-меню (твой старый код)
-    return await send_main_menu(update, context)
+    
+    # Показ основного инлайн-меню (кнопки под сообщением)
+    return await show_main_menu(update, context)
 
     # --- Сбор полной информации ---
     if chat_id not in ALL_USERS_IDS:
@@ -672,10 +678,9 @@ async def finish_test(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: i
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    # Если пользователь нажал на кнопку "Главное меню" на клавиатуре
+    # Проверка нажатия кнопки на основной клавиатуре
     if text == "🏠 Главное меню":
-        # Сбрасываем состояние (если нужно) и отправляем инлайн-меню
-        return await send_main_menu(update, context)
+        return await start(update, context)
 
     # --- Сбор полной информации ---
     if chat_id not in ALL_USERS_IDS:
