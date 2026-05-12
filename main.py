@@ -1,13 +1,5 @@
 """
-Physics Reference & Quiz Telegram Bot (v4.2 с Вынесенным Контентом и Webhook/Polling)
-Совместим с python-telegram-bot v22.5
 
-Особенности:
-1. Контент (теория, формулы, тесты) вынесен в data.py.
-2. Поддержка команды /help_admin.
-3. Управление базой данных (save_db, list_users, broadcast, send_to).
-4. Интеграция с Gemini.
-"""
 
 import os
 import logging
@@ -15,8 +7,6 @@ import random
 import re
 import json
 import sys
-from google import genai
-from google.api_core import exceptions
 import time
 from typing import Dict, Any, List
 
@@ -70,24 +60,12 @@ def load_token() -> str:
 TOKEN = load_token()
 
 
-# получение токена для гемини 
-
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') 
-ai_client = None
-
-if GEMINI_API_KEY and genai:
-    try:
-        # Инициализация клиента
-        ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        logger.info("Клиент Gemini успешно инициализирован.")
-    except Exception as e:
-        logger.error(f"Ошибка инициализации Gemini: {e}")
 
 
-# ========================= BROADCAST & USER DB CONFIG =========================
 
-# !!! ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ ЭТОТ ID НА ВАШ ЛИЧНЫЙ TELEGRAM ID !!!
-OWNER_ID = 8707709434  # <--- ВАШ ID
+
+
+OWNER_ID = 8707709434  # мой ид телеги
 
 # Глобальная переменная для хранения информации о пользователях
 ALL_USERS_IDS: Dict[int, Dict[str, Any]] = {}
@@ -234,7 +212,6 @@ def build_main_menu() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton('📚 Изучение тем', callback_data='menu:study')],
         [InlineKeyboardButton('📝 Пройти тест', callback_data='menu:test')],
-        [InlineKeyboardButton('💡 Спросить Репетитора (ИИ)', callback_data='menu:ai_chat')],
         [InlineKeyboardButton('ℹ️ О боте, поддержка', callback_data='menu:about')],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -350,7 +327,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # --- 1. Обработка главного меню ---
+    # Обработка главного меню
     if data == 'menu:study':
         await query.edit_message_text('Выберите класс для изучения:', reply_markup=build_class_keyboard('study'))
         return
@@ -366,26 +343,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'По всем ошибкам и вопросам обращаться: @physicstheorysupport_bot.'
         )
         
-    if data == 'menu:ai_chat':
-        uid = query.from_user.id
-        
-        if not ai_client:
-            await query.edit_message_text("⛔️ Функция ИИ временно недоступна.", reply_markup=build_main_menu(), parse_mode='HTML')
-            return
-            
-        # Устанавливаем режим AI
-        user_sessions[uid] = user_sessions.get(uid, {})
-        user_sessions[uid]['mode'] = 'ai_chat'
-        
-        chat_message = (
-            "💡 **Режим ИИ-Репетитора активирован!**\n\n"
-            "Вы можете задавать вопросы по физике напрямую, без команд.\n"
-            "Чтобы вернуться в главное меню, нажмите кнопку ниже или введите /start."
-        )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton('🚪 Выйти из режима ИИ', callback_data='menu:main')]])
-
-        await query.edit_message_text(chat_message, reply_markup=kb, parse_mode='Markdown')
-        return
+     
 
     if data == 'menu:main':
         uid = query.from_user.id
@@ -651,34 +609,15 @@ async def finish_test(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: i
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user = update.effective_user
-    chat_id = update.effective_chat.id
 
-    # Если нажата кнопка на клавиатуре
+    # Оставляем только переход в главное меню по кнопке
     if text == "🏠 Главное меню":
         return await start(update, context)
 
-    # Регистрация (на случай, если пользователь сразу написал текст)
-    if chat_id not in ALL_USERS_IDS:
-        user_data = {
-            'id': user.id,
-            'first_name': user.first_name,
-            'last_name': user.last_name if user.last_name else '',
-            'username': user.username if user.username else '',
-        }
-        ALL_USERS_IDS[chat_id] = user_data
-        save_user_ids()
-
-    uid = update.effective_user.id
-    
-    # 1. Проверка режима AI Chat
-    if uid in user_sessions and user_sessions[uid].get('mode') == 'ai_chat':
-        await ai_query_handler(update, context)
-        return
-
-    # 2. Если не в режиме AI, показываем главное меню
-    msg_text = "Отправьте /start для запуска бота или выберите одну из кнопок в меню."
-    await update.message.reply_text(msg_text, reply_markup=build_main_menu())
+    # Если пользователь просто что-то пишет, отвечаем, что работаем через меню
+    await update.message.reply_text(
+        "Я понимаю только команды из меню. Нажмите на кнопку «🏠 Главное меню» или выберите класс ниже."
+    )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
