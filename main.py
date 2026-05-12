@@ -1,6 +1,5 @@
 import os
 import logging
-import random
 import json
 import sys
 import time
@@ -15,83 +14,118 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-import telegram
+from telegram.error import InvalidToken
 
-# --- ЛОГИРОВАНИЕ ---
+# --- НАСТРОЙКИ ЛОГИРОВАНИЯ ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# --- ЗАГРУЗКА КОНТЕНТА ---
+# --- ИМПОРТ КОНТЕНТА ---
 try:
     from data import CONTENT
 except ImportError:
-    print("\nОШИБКА: Файл data.py не найден!\n")
+    print("\nКРИТИЧЕСКАЯ ОШИБКА: Файл data.py не найден!\n")
     sys.exit(1)
 
-# --- НАСТРОЙКИ ---
+# --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
 TOKEN = os.getenv('BOT_TOKEN')
-OWNER_ID = 8707709434  # Твой ID
 DB_PATH = os.getenv('DB_PATH', '.')
-
 USERS_FILE = os.path.join(DB_PATH, 'users_db.json')
-STATS_FILE = os.path.join(DB_PATH, 'stats_db.json')
 
-# Базы данных в памяти
 ALL_USERS_IDS: Dict[int, Dict[str, Any]] = {}
-user_stats: Dict[int, Dict[str, Any]] = {}
-user_sessions: Dict[int, Dict[str, Any]] = {}
+user_sessions: Dict[int, Dict[str, Any]] = {} # Для хранения состояния тестов
 
-# --- РАБОТА С БД ---
+# --- РАБОТА С БАЗОЙ ДАННЫХ ---
 def load_db():
-    global ALL_USERS_IDS, user_stats
+    global ALL_USERS_IDS
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, 'r', encoding='utf-8') as f:
-            try:
+        try:
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+                # Конвертируем ключи обратно в int
                 ALL_USERS_IDS = {int(k): v for k, v in data.items()}
-            except: pass
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, 'r', encoding='utf-8') as f:
-            try:
-                data = json.load(f)
-                user_stats = {int(k): v for k, v in data.items()}
-            except: pass
+        except Exception as e:
+            logger.error(f"Ошибка загрузки БД: {e}")
 
 def save_db():
-    with open(USERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(ALL_USERS_IDS, f, ensure_ascii=False, indent=4)
-    with open(STATS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(user_stats, f, ensure_ascii=False, indent=4)
+    try:
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(ALL_USERS_IDS, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(f"Ошибка сохранения БД: {e}")
 
 load_db()
 
 # --- КЛАВИАТУРЫ ---
 def get_main_reply_keyboard():
+    """Кнопка под полем ввода"""
     return ReplyKeyboardMarkup([['🏠 Главное меню']], resize_keyboard=True, is_persistent=True)
 
 def build_main_menu() -> InlineKeyboardMarkup:
+    """Главные инлайн-кнопки"""
     keyboard = [
         [InlineKeyboardButton('📚 Изучение тем', callback_data='menu:study')],
         [InlineKeyboardButton('📝 Пройти тест', callback_data='menu:test')],
-        [InlineKeyboardButton('ℹ️ О боте', callback_data='menu:about')],
+        [InlineKeyboardButton('📊 Моя статистика', callback_data='menu:stats')],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def build_class_keyboard(prefix: str) -> InlineKeyboardMarkup:
+    """Выбор класса"""
     buttons = []
     for cls in sorted(CONTENT.keys(), key=int):
-        buttons.append([InlineKeyboardButton(f'Класс {cls}', callback_data=f'{prefix}:class:{cls}')])
+        buttons.append([InlineKeyboardButton(f'{cls} класс', callback_data=f'{prefix}:class:{cls}')])
     buttons.append([InlineKeyboardButton('⬅️ Назад', callback_data='menu:main')])
     return InlineKeyboardMarkup(buttons)
 
 def build_topics_keyboard(class_id: str, prefix: str) -> InlineKeyboardMarkup:
+    """Выбор темы"""
     topics = list(CONTENT.get(class_id, {}).keys())
-    kb = [[InlineKeyboardButton(t, callback_data=f'{prefix}:topic:{class_id}:{i}')] for i, t in enumerate(topics)]
+    kb = []
+    for i, t_name in enumerate(topics):
+        kb.append([InlineKeyboardButton(t_name, callback_data=f'{prefix}:topic:{class_id}:{i}')])
     kb.append([InlineKeyboardButton('⬅️ Назад', callback_data=f'{prefix}:back_to_classes')])
     return InlineKeyboardMarkup(kb)
+
+# --- ЛОГИКА ТЕСТОВ ---
+async def send_test_question(query, session):
+    cls = session['class']
+    t_idx = session['topic_idx']
+    q_idx = session['current_q']
+    
+    topic_name = list(CONTENT[cls].keys())[t_idx]
+    questions = CONTENT[cls][topic_name].get('questions', [])
+
+    if q_idx < len(questions):
+        q_data = questions[q_idx]
+        keyboard = []
+        for i, opt in enumerate(q_data['options']):
+            is_correct = 1 if i == q_data['a'] else 0
+            keyboard.append([InlineKeyboardButton(opt, callback_data=f"ans:{is_correct}")])
+        
+        text = f"<b>Тест: {topic_name}</b>\nВопрос {q_idx + 1} из {len(questions)}\n\n{q_data['q']}"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    else:
+        # Конец теста
+        score = session['score']
+        total = len(questions)
+        
+        # Обновляем статистику пользователя
+        user_id = query.from_user.id
+        if user_id in ALL_USERS_IDS:
+            ALL_USERS_IDS[user_id]['solved'] = ALL_USERS_IDS[user_id].get('solved', 0) + score
+            save_db()
+
+        await query.edit_message_text(
+            f"<b>Тест завершен!</b>\n\nВаш результат: {score} из {total} правильных ответов.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 В меню", callback_data="menu:main")]]),
+            parse_mode='HTML'
+        )
+        if user_id in user_sessions:
+            del user_sessions[user_id]
 
 # --- ОБРАБОТЧИКИ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,133 +135,97 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat_id not in ALL_USERS_IDS:
         ALL_USERS_IDS[chat_id] = {
-            'id': user.id,
             'first_name': user.first_name,
-            'username': user.username
+            'username': user.username,
+            'joined': time.ctime(),
+            'solved': 0
         }
         save_db()
 
     await update.message.reply_text(
-        f"Привет, {user.first_name}! Я твой помощник по физике.",
+        f"Привет, {user.first_name}! Я твой помощник по физике Physix.",
         reply_markup=get_main_reply_keyboard()
     )
-    await update.message.reply_text("Выберите раздел:", reply_markup=build_main_menu())
+    await update.message.reply_text("Выберите раздел для начала:", reply_markup=build_main_menu())
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "🏠 Главное меню":
-        await update.message.reply_text("Возвращаю в меню:", reply_markup=build_main_menu())
+        await update.message.reply_text("Возвращаю вас в главное меню:", reply_markup=build_main_menu())
         return
-    await update.message.reply_text("Пожалуйста, используйте кнопки меню для управления ботом.")
-
-
-async def send_test_question(query, context):
-    user_id = query.from_user.id
-    session = user_sessions.get(user_id)
-    
-    cls = session['class']
-    topic_idx = session['topic_idx']
-    q_idx = session['current_q']
-    
-    topic_name = list(CONTENT[cls].keys())[topic_idx]
-    questions = CONTENT[cls][topic_name].get('questions', [])
-
-    if q_idx < len(questions):
-        q_data = questions[q_idx]
-        keyboard = []
-        for i, option in enumerate(q_data['options']):
-            # В callback_data передаем, правильный ли это ответ (ans:1 или ans:0)
-            is_correct = 1 if i == q_data['a'] else 0
-            keyboard.append([InlineKeyboardButton(option, callback_data=f"ans:{is_correct}")])
-        
-        text = f"<b>Вопрос №{q_idx + 1}:</b>\n\n{q_data['q']}"
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-    else:
-        # Тест окончен
-        score = session['score']
-        total = len(questions)
-        
-        # Сохраняем в общую статистику
-        global user_stats
-        if user_id not in user_stats: user_stats[user_id] = {'solved': 0}
-        user_stats[user_id]['solved'] += score
-        save_db()
-        
-        await query.edit_message_text(
-            f"<b>Тест завершен!</b>\n\nВаш результат: {score} из {total}",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В меню", callback_data="menu:main")]]),
-            parse_mode='HTML'
-        )
-        del user_sessions[user_id]
-
+    await update.message.reply_text("Пожалуйста, используйте кнопки меню для навигации.")
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
     data = query.data
 
+    # Обработка ответов на тесты
     if data.startswith('ans:'):
         is_correct = int(data.split(':')[1])
-        user_id = query.from_user.id
         if user_id in user_sessions:
             if is_correct:
                 user_sessions[user_id]['score'] += 1
             user_sessions[user_id]['current_q'] += 1
-            await send_test_question(query, context)
+            await send_test_question(query, user_sessions[user_id])
+        return
 
+    # Навигация
     if data == 'menu:main':
-        await query.edit_message_text('Главное меню:', reply_markup=build_main_menu())
+        await query.edit_message_text('Выберите раздел:', reply_markup=build_main_menu())
     elif data == 'menu:study':
         await query.edit_message_text('Выберите класс:', reply_markup=build_class_keyboard('study'))
     elif data == 'menu:test':
         await query.edit_message_text('Выберите класс для теста:', reply_markup=build_class_keyboard('test'))
-    elif data == 'menu:about':
-        await query.edit_message_text('Бот-справочник по физике.\nСоздан для помощи в изучении тем и сдаче тестов.', 
-                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Назад', callback_data='menu:main')]]))
+    elif data == 'menu:stats':
+        solved = ALL_USERS_IDS.get(user_id, {}).get('solved', 0)
+        await query.edit_message_text(
+            f"📊 <b>Ваша статистика:</b>\nВсего правильных ответов: {solved}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="menu:main")]]),
+            parse_mode='HTML'
+        )
 
-    # Логика выбора классов и тем
+    # Работа с подразделами (Классы и Темы)
     parts = data.split(':')
     if len(parts) >= 3:
         prefix, action, cls = parts[0], parts[1], parts[2]
         
         if action == 'class':
-            await query.edit_message_text(f'Класс {cls}:', reply_markup=build_topics_keyboard(cls, prefix))
+            await query.edit_message_text(f'Темы для {cls} класса:', reply_markup=build_topics_keyboard(cls, prefix))
         
-        elif prefix == 'test':
-                user_sessions[query.from_user.id] = {
-                    'class': cls,
-                    'topic_idx': topic_idx,
-                    'current_q': 0,
-                    'score': 0
-                }
-                return await send_test_question(query, context)
+        elif action == 'topic':
+            t_idx = int(parts[3])
+            topic_name = list(CONTENT[cls].keys())[t_idx]
             
             if prefix == 'study':
-                text = f"<b>{topic_name}</b>\n\n{topic_data['theory']}"
+                theory_text = CONTENT[cls][topic_name]['theory']
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton('📝 Тест по теме', callback_data=f'test:topic:{cls}:{topic_idx}')],
+                    [InlineKeyboardButton('📝 Пройти тест по теме', callback_data=f'test:topic:{cls}:{t_idx}')],
                     [InlineKeyboardButton('⬅️ Назад', callback_data=f'study:class:{cls}')]
                 ])
-                await query.edit_message_text(text, reply_markup=kb, parse_mode='HTML')
+                await query.edit_message_text(theory_text, reply_markup=kb, parse_mode='HTML')
             
             elif prefix == 'test':
-                # Здесь можно добавить запуск теста (упрощено для стабильности)
-                await query.edit_message_text(f"Функция теста для темы '{topic_name}' в разработке.")
+                user_sessions[user_id] = {'class': cls, 'topic_idx': t_idx, 'current_q': 0, 'score': 0}
+                await send_test_question(query, user_sessions[user_id])
 
     if data.endswith('back_to_classes'):
         prefix = data.split(':')[0]
         await query.edit_message_text('Выберите класс:', reply_markup=build_class_keyboard(prefix))
 
-# --- ЗАПУСК ---
+# --- ЗАПУСК БОТА ---
 def main():
     if not TOKEN:
-        print("ОШИБКА: BOT_TOKEN не установлен!")
+        print("ОШИБКА: Переменная BOT_TOKEN не установлена!")
         return
+    
     app = ApplicationBuilder().token(TOKEN).build()
+    
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
-    print("Бот запущен...")
+    print("Физик-бот запущен успешно!")
     app.run_polling()
 
 if __name__ == '__main__':
