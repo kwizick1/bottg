@@ -119,10 +119,60 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("Пожалуйста, используйте кнопки меню для управления ботом.")
 
+
+async def send_test_question(query, context):
+    user_id = query.from_user.id
+    session = user_sessions.get(user_id)
+    
+    cls = session['class']
+    topic_idx = session['topic_idx']
+    q_idx = session['current_q']
+    
+    topic_name = list(CONTENT[cls].keys())[topic_idx]
+    questions = CONTENT[cls][topic_name].get('questions', [])
+
+    if q_idx < len(questions):
+        q_data = questions[q_idx]
+        keyboard = []
+        for i, option in enumerate(q_data['options']):
+            # В callback_data передаем, правильный ли это ответ (ans:1 или ans:0)
+            is_correct = 1 if i == q_data['a'] else 0
+            keyboard.append([InlineKeyboardButton(option, callback_data=f"ans:{is_correct}")])
+        
+        text = f"<b>Вопрос №{q_idx + 1}:</b>\n\n{q_data['q']}"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    else:
+        # Тест окончен
+        score = session['score']
+        total = len(questions)
+        
+        # Сохраняем в общую статистику
+        global user_stats
+        if user_id not in user_stats: user_stats[user_id] = {'solved': 0}
+        user_stats[user_id]['solved'] += score
+        save_db()
+        
+        await query.edit_message_text(
+            f"<b>Тест завершен!</b>\n\nВаш результат: {score} из {total}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В меню", callback_data="menu:main")]]),
+            parse_mode='HTML'
+        )
+        del user_sessions[user_id]
+
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    if data.startswith('ans:'):
+        is_correct = int(data.split(':')[1])
+        user_id = query.from_user.id
+        if user_id in user_sessions:
+            if is_correct:
+                user_sessions[user_id]['score'] += 1
+            user_sessions[user_id]['current_q'] += 1
+            await send_test_question(query, context)
 
     if data == 'menu:main':
         await query.edit_message_text('Главное меню:', reply_markup=build_main_menu())
@@ -142,10 +192,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == 'class':
             await query.edit_message_text(f'Класс {cls}:', reply_markup=build_topics_keyboard(cls, prefix))
         
-        elif action == 'topic':
-            topic_idx = int(parts[3])
-            topic_name = list(CONTENT[cls].keys())[topic_idx]
-            topic_data = CONTENT[cls][topic_name]
+        elif prefix == 'test':
+                user_sessions[query.from_user.id] = {
+                    'class': cls,
+                    'topic_idx': topic_idx,
+                    'current_q': 0,
+                    'score': 0
+                }
+                return await send_test_question(query, context)
             
             if prefix == 'study':
                 text = f"<b>{topic_name}</b>\n\n{topic_data['theory']}"
